@@ -1,6 +1,9 @@
 initial begin
   cm_ram[0] = {6'h0, 5'd0, 5'd0, 5'd0, 5'h0, 6'h20}; // 0: add $0, $0, $0
   cm_ram[1] = {6'h0, 5'd0, 5'd0, 5'd30, 5'h0, 6'h20}; // 0: add $30, $0, $0
-  cm_ram[2] = {6'h8, 5'd30, 5'd30, 16'd1}; // 0: addi $30, $30, 1
-  cm_ram[3] = {6'h4, 5'd0, 5'd0, 16'hfffe}; // loop
+  cm_ram[2] = {6'h8, 5'd0, 5'd2, 16'h20}; // 0: add $2, $0, 32
+  cm_ram[3] = {6'h4, 5'd2, 5'd0, 16'hfffe}; // beq $2, $0, ** not taken
+  cm_ram[4] = {6'h8, 5'd30, 5'd30, 16'd1}; // 0: addi $30, $30, 1
+  cm_ram[5] = {6'h4, 5'd0, 5'd0, 16'hfffd}; // loop
+  cm_ram[6] = {6'h0, 5'd0, 5'd0, 5'd0, 5'h0, 6'h20}; // 0: add $0, $0, $0
 end

@@ -153,19 +153,23 @@ module m_proc11 (w_clk, r_rout);
   wire [10:0] w_pr;
   wire w_taken, w_pre;
   wire [31:0] w_tpc, w_npc, w_ir;
-  reg [31:0] r_pc = 0;
+  reg [31:0] r_pc = 0, r_id_interlock_ir = 0;
   wire [31:0] w_pc4 = r_pc + 4;
+  reg r_id_interlock = 0;
   m_memory m_imem (w_clk, r_pc[12:2], 1'd0, 32'd0, w_ir);
   assign w_npc = (w_rst | r_halt) ? 0 :
+                 (w_id_interlock) ? r_pc :
                  (w_pre) ? {19'h0, w_pr, 2'h0} :
-                 ((!IfId_pre || w_pr_fail) && w_taken) ? w_tpc :
-                 (w_br_stall) ? r_pc : w_pc4;
-  assign IfId_ir = (r_stall) ? `NOP : w_ir;
+                 ((!IfId_pre || w_pr_fail) && w_taken) ? w_tpc : w_pc4;
+  assign IfId_ir = (r_id_interlock) ? r_id_interlock_ir : (r_stall) ? `NOP : w_ir;
   always @(posedge w_clk) begin
     r_pc <= #3 w_npc;
-    r_stall <= #3 w_br_stall;
-    IfId_pc <= #3 r_pc;
-    IfId_pc4 <= #3 w_pc4;
+    r_id_interlock <= w_id_interlock;
+    r_id_interlock_ir <= w_ir; 
+    if (!w_id_interlock) begin
+      IfId_pc <= #3 r_pc;
+      IfId_pc4 <= #3 w_pc4;
+    end
     IfId_pre <= #3 w_pre;
   end
   /**************************** ID stage ***********************************/
@@ -180,34 +184,32 @@ module m_proc11 (w_clk, r_rout);
   wire [31:0] w_rrs_fw = (MeWb_w && MeWb_rd2 == w_rs) ? w_rslt2 : w_rrs;
   wire [31:0] w_rrt_fw = (MeWb_w && MeWb_rd2 == w_rt) ? w_rslt2 : w_rrt;
   wire [31:0] w_rrt2 = (w_op>6'h5) ? w_imm32 : w_rrt_fw;
-  wire [31:0] w_bop1 = (IdEx_w && IdEx_rd2 == w_rs) ? w_rslt :
-                       (ExMe_w && ExMe_rd2 == w_rs) ? ExMe_rslt :
+  wire [31:0] w_bop1 = (ExMe_w && ExMe_rd2 == w_rs) ? ExMe_rslt :
                        (MeWb_w && MeWb_rd2 == w_rs) ? w_rslt2 : w_rrs;
-  wire [31:0] w_bop2 = (IdEx_w && IdEx_rd2 == w_rt) ? w_rslt :
-                       (ExMe_w && ExMe_rd2 == w_rt) ? ExMe_rslt :
+  wire [31:0] w_bop2 = (ExMe_w && ExMe_rd2 == w_rt) ? ExMe_rslt :
                        (MeWb_w && MeWb_rd2 == w_rt) ? MeWb_rslt : w_rrt;
-  wire w_pr_fail = IfId_pre && w_tpc != r_pc;
-  wire w_br_stall = w_be && !IfId_pre;
+  wire w_id_interlock = w_be && (IdEx_w && (IdEx_rd2 == w_rs || IdEx_rd2 == w_rt));
+  wire w_pr_fail = w_be && (w_taken ? w_tpc : IfId_pc4) != r_pc;
+  reg  r_pr_fail = 0;
   assign w_be = w_op==`BNE || w_op==`BEQ;
   assign w_tpc = IfId_pc4 + {w_imm32[29:0], 2'h0};
   assign w_taken = (w_op==`BNE && w_bop1!=w_bop2) || (w_op==`BEQ && w_bop1==w_bop2);
-  m_predictor m_brp (w_clk, IfId_pc[12:2], (w_taken) ? w_tpc[12:2] : IfId_pc4[12:2], w_be, r_pc[12:2], w_pr, w_pre);
+  m_predictor m_brp (w_clk, IfId_pc[12:2], (w_taken) ? w_tpc[12:2] : IfId_pc4[12:2], w_be && !w_id_interlock, r_pc[12:2], w_pr, w_pre);
   m_regfile m_regs (w_clk, w_rs, w_rt, MeWb_rd2, MeWb_w, w_rslt2, w_rrs, w_rrt);
   always @(posedge w_clk) begin
+    r_pr_fail <= #3 w_pr_fail;
     IdEx_pc <= #3 IfId_pc;
     IdEx_op <= #3 w_op;
     IdEx_rs <= #3 w_rs;
     IdEx_rt <= #3 w_rt;
     IdEx_rd2 <= #3 w_rd2;
-    IdEx_w <= #3 w_pr_fail ? 0 : (w_op==0 || (w_op>6'h5 && w_op<6'h28));
-    IdEx_we <= #3 w_pr_fail ? 0 : (w_op>6'h27);
+    IdEx_w <= #3 r_pr_fail ? 0 : (w_op==0 || (w_op>6'h5 && w_op<6'h28));
+    IdEx_we <= #3 r_pr_fail ? 0 : (w_op>6'h27);
     IdEx_rrs <= #3 w_rrs_fw;
     IdEx_rrt <= #3 w_rrt_fw;
     IdEx_rrt2 <= #3 w_rrt2;
   end
-  always @(negedge w_clk) begin
-    
-  end
+
   /**************************** EX stage ***********************************/
   wire [31:0] w_op1 = (ExMe_w && ExMe_rd2 == IdEx_rs) ? ExMe_rslt : 
                       (MeWb_w && MeWb_rd2 == IdEx_rs) ? w_rslt2 : IdEx_rrs;
