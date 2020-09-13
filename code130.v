@@ -269,7 +269,7 @@ module m_proc11 (w_clk, r_rout);
                       (MeWb_w && IdEx_op == 0 && MeWb_rd2 == IdEx_rt) ? MeWb_rslt : IdEx_rrt2;
   wire [31:0] #10 w_rslt = w_op1 + w_op2; // ALU
   
-  assign w_interlock = MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
+  assign w_interlock = (w_ex_be || IdEx_w || IdEx_we) && MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
   
   // branch
   // w_op[2] populates only if op == BNE || op == BEQ
