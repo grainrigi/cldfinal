@@ -75,15 +75,15 @@ endmodule
 
 module m_predictor (w_clk, w_baddr, w_br, w_be, w_paddr, w_pr, w_pre);
   input  wire        w_clk;
-  input  wire [10:0] w_baddr, w_br;
-  input  wire        w_be;
+  input  wire [10:0] w_baddr;
+  input  wire        w_br, w_be;
   input  wire [10:0] w_paddr;
-  output wire [10:0] w_pr;
+  output wire        w_pr;
   output wire        w_pre;
 
   reg [10:0] r_addr[0:1];
   reg        r_priority[0:1];
-  reg [10:0] r_predict[0:1];
+  reg        r_predict[0:1];
   generate genvar g;
     for (g = 0; g < 2; g = g + 1) begin : Gen
       initial r_addr[g] = 11'b11111111111;
@@ -129,6 +129,56 @@ module m_predictor (w_clk, w_baddr, w_br, w_be, w_paddr, w_pr, w_pre);
   assign w_pre = w_pselect != 2;
 endmodule
 
+module m_id_cache(w_clk, w_wkey, w_wvalue, w_we, w_rkey, w_rvalue);
+  input wire w_clk;
+  input wire [10:0] w_wkey, w_wvalue;
+  input wire w_we;
+  input wire [10:0] w_rkey;
+  output wire [10:0] w_rvalue;
+  
+  reg [10:0] r_key[0:1];
+  reg        r_priority[0:1];
+  reg [10:0] r_value[0:1];
+  generate genvar g;
+    for (g = 0; g < 2; g = g + 1) begin : Gen
+      initial r_key[g] = 11'b11111111111;
+      initial r_priority[g] = g;
+      initial r_value[g] = 0;
+    end
+  endgenerate
+  
+  wire [1:0] w_wselect = (r_key[0] == w_wkey) ? 0 :
+                         (r_key[1] == w_wkey) ? 1 : 2;
+  wire [1:0] w_rselect = (r_key[0] == w_rkey) ? 0 :
+                         (r_key[1] == w_rkey) ? 1 : 2;
+  
+  // update table
+  always @(posedge w_clk) if (w_we == 1) begin
+    if (w_wselect != 2) begin
+      r_value[w_wselect] <= #3 w_wvalue;
+      // update priority
+      r_priority[0] <= #3 (w_wselect == 0) ? 0 : 1;
+      r_priority[0] <= #3 (w_wselect == 1) ? 0 : 1;
+    end
+    else begin
+      if (r_priority[0] == 1) begin
+        r_key[0] <= #3 w_wkey;
+        r_value[0] <= #3 w_wvalue;
+      end
+      if (r_priority[1] == 1) begin
+        r_key[1] <= #3 w_wkey;
+        r_value[1] <= #3 w_wvalue;
+      end
+      // update priority
+      r_priority[0] <= #3 (r_priority[0] == 1) ? 0 : 1;
+      r_priority[1] <= #3 (r_priority[1] == 1) ? 0 : 1;
+    end
+  end
+  
+  // fetch value
+  assign w_rvalue = r_value[w_rselect[0]];
+endmodule
+
 module m_proc11 (w_clk, r_rout);
   input wire w_clk;
   output reg [31:0] r_rout;
@@ -136,30 +186,33 @@ module m_proc11 (w_clk, r_rout);
   reg r_halt = 0, r_stall = 0;
   wire w_be;
   wire w_rst = 0;
-  reg [31:0] IfId_pc4=0; // pipe regs
+  reg [10:0] IfId_pc4=0; // pipe regs
   reg [31:0] IdEx_rrs=0, IdEx_rrt=0, IdEx_rrt2=0; //
   reg [31:0] ExMe_rslt=0, ExMe_rrt=0; //
   reg [31:0] MeWb_rslt=0; //
   reg [5:0] IdEx_op=0, ExMe_op=0, MeWb_op=0; //
-  reg [31:0] IfId_pc=0, IdEx_pc=0, ExMe_pc=0, MeWb_pc=0; //
+  reg [10:0] IfId_pc=0, IdEx_pc=0, ExMe_pc=0, MeWb_pc=0; //
   reg [4:0] IdEx_rs=0;
   reg [4:0] IdEx_rt=0, ExMe_rt=0;
   reg [4:0] IfId_rd2=0, IdEx_rd2=0, ExMe_rd2=0, MeWb_rd2=0;//
   reg IfId_w=0, IdEx_w=0, ExMe_w=0, MeWb_w=0; //
   reg IfId_we=0, IdEx_we=0, ExMe_we=0; //
   reg IfId_pre=0;
+  reg IfId_pr=0;
   wire [31:0] IfId_ir, MeWb_ldd; // note
   /**************************** IF stage **********************************/
-  wire [10:0] w_pr;
-  wire w_taken, w_pre;
-  wire [31:0] w_tpc, w_npc, w_ir;
-  reg [31:0] r_pc = 0, r_id_interlock_ir = 0;
-  wire [31:0] w_pc4 = r_pc + 4;
+  wire [10:0] w_bra;
+  wire w_taken, w_pre, w_pr;
+  wire [10:0] w_tpc, w_npc;
+  wire [31:0] w_ir;
+  reg [10:0] r_pc = 0; 
+  reg [31:0] r_id_interlock_ir = 0;
+  wire [10:0] w_pc4 = r_pc + 1;
   reg r_id_interlock = 0;
-  m_memory m_imem (w_clk, r_pc[12:2], 1'd0, 32'd0, w_ir);
+  m_memory m_imem (w_clk, r_pc, 1'd0, 32'd0, w_ir);
   assign w_npc = (w_rst | r_halt) ? 0 :
                  (w_id_interlock) ? r_pc :
-                 (w_pre) ? {19'h0, w_pr, 2'h0} :
+                 (w_pre) ? (w_pr ? w_bra : w_pc4) :
                  ((!IfId_pre || w_pr_fail) && w_taken) ? w_tpc : w_pc4;
   assign IfId_ir = (r_id_interlock) ? r_id_interlock_ir : (r_stall) ? `NOP : w_ir;
   always @(posedge w_clk) begin
@@ -170,6 +223,7 @@ module m_proc11 (w_clk, r_rout);
       IfId_pc <= #3 r_pc;
       IfId_pc4 <= #3 w_pc4;
     end
+    IfId_pr <= #3 w_pr;
     IfId_pre <= #3 w_pre;
   end
   /**************************** ID stage ***********************************/
@@ -189,12 +243,14 @@ module m_proc11 (w_clk, r_rout);
   wire [31:0] w_bop2 = (ExMe_w && ExMe_rd2 == w_rt) ? ExMe_rslt :
                        (MeWb_w && MeWb_rd2 == w_rt) ? MeWb_rslt : w_rrt;
   wire w_id_interlock = w_be && (IdEx_w && (IdEx_rd2 == w_rs || IdEx_rd2 == w_rt));
-  wire w_pr_fail = w_be && (w_taken ? w_tpc : IfId_pc4) != r_pc;
+  wire w_pr_fail = w_be && w_taken != IfId_pr;
   reg  r_pr_fail = 0;
   assign w_be = w_op==`BNE || w_op==`BEQ;
-  assign w_tpc = IfId_pc4 + {w_imm32[29:0], 2'h0};
-  assign w_taken = (w_op==`BNE && w_bop1!=w_bop2) || (w_op==`BEQ && w_bop1==w_bop2);
-  m_predictor m_brp (w_clk, IfId_pc[12:2], (w_taken) ? w_tpc[12:2] : IfId_pc4[12:2], w_be && !w_id_interlock, r_pc[12:2], w_pr, w_pre);
+  assign w_tpc = IfId_pc4 + w_imm[10:0];
+  // w_op[2] populates only if op == BNE || op == BEQ
+  assign w_taken = w_op[2] && (w_op[0] ? w_bop1!=w_bop2 : w_bop1==w_bop2);
+  m_predictor m_brp (w_clk, IfId_pc, w_taken, w_be && !w_id_interlock, r_pc, w_pr, w_pre);
+  m_id_cache m_br_cache (w_clk, IfId_pc, w_tpc, w_be && !w_id_interlock, r_pc, w_bra);
   m_regfile m_regs (w_clk, w_rs, w_rt, MeWb_rd2, MeWb_w, w_rslt2, w_rrs, w_rrt);
   always @(posedge w_clk) begin
     r_pr_fail <= #3 w_pr_fail;
