@@ -55,7 +55,7 @@ module m_memory (w_clk, w_addr, w_we, w_din, r_dout);
    reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
    always @(posedge w_clk) if (w_we) cm_ram[w_addr] <= w_din;
    always @(posedge w_clk) r_dout <= cm_ram[w_addr];
-`include "program_interlock.txt"
+`include "program_loop.txt"
 endmodule
 
 module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
@@ -73,119 +73,97 @@ module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
    initial r[0] = 0;
 endmodule
 
-module m_predictor (w_clk, w_baddr, w_br, w_be, w_paddr, w_pr, w_pre);
+module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w_pre);
   input  wire        w_clk;
-  input  wire [10:0] w_baddr;
+  input  wire [10:0] w_baddr, w_bdst;
   input  wire        w_br, w_be;
   input  wire [10:0] w_paddr;
   output wire        w_pr;
+  output wire [10:0] w_pdst;
   output wire        w_pre;
 
-  reg [10:0] r_addr[0:1];
-  reg        r_priority[0:1];
-  reg [1:0]  r_predict[0:1];
+  reg [10:0] r_addr[0:3];
+  reg [1:0]  r_priority[0:3];
+  reg [10:0] r_dst[0:3];
+  reg [1:0]  r_predict[0:3];
   generate genvar g;
-    for (g = 0; g < 2; g = g + 1) begin : Gen
+    for (g = 0; g < 4; g = g + 1) begin : Gen
       initial r_addr[g] = 11'b11111111111;
       initial r_priority[g] = g;
+      initial r_dst[g] = 11'b11111111111;
       initial r_predict[g] = 0;
     end
   endgenerate
 
   // internal
-  wire [1:0] w_bselect = (r_addr[0] == w_baddr) ? 0
+  wire [2:0] w_bselect = (r_addr[0] == w_baddr) ? 0
                        : (r_addr[1] == w_baddr) ? 1
-                       : 2;
-  wire [1:0] w_pselect = (r_addr[0] == w_paddr) ? 0
+                       : (r_addr[2] == w_baddr) ? 2
+                       : (r_addr[3] == w_baddr) ? 3
+                       : 4;
+  wire [1:0] w_bselect_e = w_bselect[1:0];
+  wire [1:0] w_bpriority = r_priority[w_bselect_e];
+  wire [2:0] w_pselect = (r_addr[0] == w_paddr) ? 0
                        : (r_addr[1] == w_paddr) ? 1
-                       : 2;
-  wire [1:0] w_npd = r_predict[w_bselect[0]][1] == w_br ? {w_br, w_br} :
-                     (r_predict[w_bselect[0]] + (w_br ? 1 : -1));
+                       : (r_addr[2] == w_paddr) ? 2
+                       : (r_addr[3] == w_paddr) ? 3
+                       : 4;
+  wire [1:0] w_pselect_e = w_pselect[1:0];
+  wire [1:0] w_npd = r_predict[w_bselect_e][1] == w_br ? {w_br, w_br} :
+                     (r_predict[w_bselect_e] + (w_br ? 1 : -1));
   
   // update table
   always @(posedge w_clk) if (w_be == 1) begin
-    if (w_bselect != 2) begin
-      r_predict[w_bselect[0]] <= #3 w_npd;
+    if (w_bselect != 4) begin
+      r_predict[w_bselect_e] <= #3 w_npd;
       $write("Update prediction: pc=%x, br=%b, pr=%b\n", w_baddr, w_br, w_npd);
       // update priority
-      r_priority[0] <= #3 (w_bselect == 0) ? 0 : 1;
-      r_priority[1] <= #3 (w_bselect == 1) ? 0 : 1;
+      r_priority[0] <= #3 (w_bselect_e == 0) ? 0 :
+                          (r_priority[0] < w_bpriority) ? r_priority[0] + 1 : r_priority[0];
+      r_priority[1] <= #3 (w_bselect_e == 1) ? 0 :
+                          (r_priority[1] < w_bpriority) ? r_priority[1] + 1 : r_priority[1];
+      r_priority[2] <= #3 (w_bselect_e == 2) ? 0 :
+                          (r_priority[2] < w_bpriority) ? r_priority[2] + 1 : r_priority[2];
+      r_priority[3] <= #3 (w_bselect_e == 3) ? 0 :
+                          (r_priority[3] < w_bpriority) ? r_priority[3] + 1 : r_priority[3];
     end
     else begin
-      if (r_priority[0] == 1) begin
+      if (r_priority[0] == 3) begin
         r_addr[0] <= #3 w_baddr;
+        r_dst[0] <= #3 w_bdst;
         r_predict[0] <= #3 w_br ? 2'b10 : 2'b01;
-        $write("Init prediction: slot=0, pc=%x, br=%b, pr=%b\n", w_baddr, w_br, w_br ? 2'b10 : 2'b01);
+        $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", 0, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
       end
-      if (r_priority[1] == 1) begin
+      if (r_priority[1] == 3) begin
         r_addr[1] <= #3 w_baddr;
+        r_dst[1] <= #3 w_bdst;
         r_predict[1] <= #3 w_br ? 2'b10 : 2'b01;
-        $write("Init prediction: slot=1, pc=%x, br=%b, pr=%b\n", w_baddr, w_br, w_br ? 2'b10 : 2'b01);
+        $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", 1, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
+      end
+      if (r_priority[2] == 3) begin
+        r_addr[2] <= #3 w_baddr;
+        r_dst[2] <= #3 w_bdst;
+        r_predict[2] <= #3 w_br ? 2'b10 : 2'b01;
+        $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", 2, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
+      end
+      if (r_priority[3] == 3) begin
+        r_addr[3] <= #3 w_baddr;
+        r_dst[3] <= #3 w_bdst;
+        r_predict[3] <= #3 w_br ? 2'b10 : 2'b01;
+        $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", 3, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
       end
       // update priority
-      r_priority[0] <= #3 (r_priority[0] == 1) ? 0 : 1;
-      r_priority[1] <= #3 (r_priority[1] == 1) ? 0 : 1;
+      r_priority[0] <= #3 (r_priority[0] == 3) ? 0 : r_priority[0] + 1;
+      r_priority[1] <= #3 (r_priority[1] == 3) ? 0 : r_priority[1] + 1;
+      r_priority[2] <= #3 (r_priority[2] == 3) ? 0 : r_priority[2] + 1;
+      r_priority[3] <= #3 (r_priority[3] == 3) ? 0 : r_priority[3] + 1;
     end
   end
 
   // fetch prediction
-  assign w_pr = r_predict[w_pselect[0]][1];
-  assign w_pre = w_pselect != 2;
-endmodule
-
-module m_id_cache(w_clk, w_wkey, w_wvalue, w_we, w_rkey, w_rvalue);
-  input wire w_clk;
-  input wire [10:0] w_wkey, w_wvalue;
-  input wire w_we;
-  input wire [10:0] w_rkey;
-  output wire [10:0] w_rvalue;
-  
-  reg [10:0] r_key[0:1];
-  reg        r_priority[0:1];
-  reg [10:0] r_value[0:1];
-  generate genvar g;
-    for (g = 0; g < 2; g = g + 1) begin : Gen
-      initial r_key[g] = 11'b11111111111;
-      initial r_priority[g] = g;
-      initial r_value[g] = 0;
-    end
-  endgenerate
-  
-  wire [1:0] w_wselect = (r_key[0] == w_wkey) ? 0 :
-                         (r_key[1] == w_wkey) ? 1 : 2;
-  wire [1:0] w_rselect = (r_key[0] == w_rkey) ? 0 :
-                         (r_key[1] == w_rkey) ? 1 : 2;
-  
-  wire w_prior1 = r_priority[0];
-  wire w_prior2 = r_priority[1];
-  
-  // update table
-  always @(posedge w_clk) if (w_we == 1) begin
-    if (w_wselect != 2) begin
-      r_value[w_wselect] <= #3 w_wvalue;
-      // update priority
-      r_priority[0] <= #3 (w_wselect == 0) ? 0 : 1;
-      r_priority[1] <= #3 (w_wselect == 1) ? 0 : 1;
-    end
-    else begin
-      if (r_priority[0] == 1) begin
-        r_key[0] <= #3 w_wkey;
-        r_value[0] <= #3 w_wvalue;
-        $write("Init cache: slot=0, key=%x, val=%x\n", w_wkey, w_wvalue);
-      end
-      if (r_priority[1] == 1) begin
-        r_key[1] <= #3 w_wkey;
-        r_value[1] <= #3 w_wvalue;
-        $write("Init cache: slot=1, key=%x, val=%x\n", w_wkey, w_wvalue);
-      end
-      // update priority
-      r_priority[0] <= #3 (r_priority[0] == 1) ? 0 : 1;
-      r_priority[1] <= #3 (r_priority[1] == 1) ? 0 : 1;
-    end
-  end
-  
-  // fetch value
-  assign w_rvalue = r_value[w_rselect[0]];
+  assign w_pr = r_predict[w_pselect_e][1];
+  assign w_pdst = r_dst[w_pselect_e];
+  assign w_pre = w_pselect != 4;
 endmodule
 
 module m_proc11 (w_clk, r_rout);
@@ -277,8 +255,7 @@ module m_proc11 (w_clk, r_rout);
   assign w_taken = w_ex_be && (IdEx_op[0] ? w_op1!=w_op2 : w_op1==w_op2);
   wire w_pr_fail = w_ex_be && w_taken != IdEx_pr;
   reg r_pr_fail = 0;
-  m_predictor m_brp (w_clk, IdEx_pc, w_taken, w_ex_be, r_pc, w_pr, w_pre);
-  m_id_cache m_br_cache (w_clk, IdEx_pc, IdEx_tpc, w_ex_be, r_pc, w_bra);
+  m_predictor m_brp (w_clk, IdEx_pc, w_taken, IdEx_tpc, w_ex_be, r_pc, w_pr, w_bra, w_pre);
   
   always @(posedge w_clk) if (!w_interlock) begin
     r_pr_fail <= #3 w_pr_fail;
