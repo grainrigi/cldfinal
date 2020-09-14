@@ -10,6 +10,4 @@ initial begin
   cm_ram[8] = {6'h8, 5'd3, 5'd3, 16'd1}; // addi $3, $3, 1
   cm_ram[9] = {6'h5, 5'd3, 5'd5, 16'hfffa}; // bne $3, $5, L1
   cm_ram[10] = {6'h4, 5'd0, 5'd0, 16'hffff}; // L3: beq $0, $0, L3
-  cm_ram[11] = {6'h0, 5'd0, 5'd0, 5'd0, 5'h0, 6'h20}; // 0: add $0, $0, $0
-  cm_ram[12] = {6'h0, 5'd0, 5'd0, 5'd0, 5'h0, 6'h20}; // 0: add $0, $0, $0
 end
