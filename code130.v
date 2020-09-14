@@ -23,7 +23,7 @@ module m_top ();
    always@(posedge r_clk) $write("%4d: %d %x %x %x %x %x %x\n", $time,
                          p.r_state, p.r_pc, p.w_ir, p.w_rrs, p.w_rrt2, p.w_rslt2, w_led);
                       */
-   initial #12000 $finish;
+   initial #14000 $finish;
 endmodule
 
 `else
@@ -172,6 +172,7 @@ module m_proc11 (w_clk, r_rout);
   reg IfId_w=0, IdEx_w=0, ExMe_w=0, MeWb_w=0; //
   reg IfId_we=0, IdEx_we=0, ExMe_we=0; //
   reg IfId_pr=0, IdEx_pr=0;
+  reg IdEx_rsfwme=0, IdEx_rsfwwb=0, IdEx_rtfwme=0, IdEx_rtfwwb=0;
   wire [31:0] IfId_ir, MeWb_ldd; // note
   /**************************** IF stage **********************************/
   wire [10:0] w_bra;
@@ -223,13 +224,17 @@ module m_proc11 (w_clk, r_rout);
     IdEx_rrt2 <= #3 w_rrt2;
     IdEx_tpc <= #3 w_tpc;
     IdEx_pr <= #3 IfId_pr;
+    IdEx_rsfwme <= #3 !w_pr_fail && IdEx_w && IdEx_rd2 == w_rs;
+    IdEx_rsfwwb <= #3 ExMe_w && ExMe_rd2 == w_rs;
+    IdEx_rtfwme <= #3 IdEx_op == 0 && !w_pr_fail && IdEx_w && IdEx_rd2 == w_rt;
+    IdEx_rtfwwb <= #3 IdEx_op == 0 && ExMe_w && ExMe_rd2 == w_rt; 
   end
 
   /**************************** EX stage ***********************************/
-  wire [31:0] w_op1 = (ExMe_w && ExMe_rd2 == IdEx_rs) ? ExMe_rslt : 
-                      (MeWb_w && MeWb_rd2 == IdEx_rs) ? MeWb_rslt : IdEx_rrs;
-  wire [31:0] w_op2 = (ExMe_w && IdEx_op == 0 && ExMe_rd2 == IdEx_rt) ? ExMe_rslt :
-                      (MeWb_w && IdEx_op == 0 && MeWb_rd2 == IdEx_rt) ? MeWb_rslt : IdEx_rrt2;
+  wire [31:0] w_op1 = (IdEx_rsfwme) ? ExMe_rslt : 
+                      (IdEx_rsfwwb) ? MeWb_rslt : IdEx_rrs;
+  wire [31:0] w_op2 = (IdEx_rtfwme) ? ExMe_rslt :
+                      (IdEx_rtfwwb) ? MeWb_rslt : IdEx_rrt2;
   wire [31:0] #10 w_rslt = w_op1 + w_op2; // ALU
   
   assign w_interlock = (w_ex_be || IdEx_w || IdEx_we) && MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
