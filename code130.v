@@ -6,6 +6,8 @@
 
 `define BEQ 6'h4
 `define BNE 6'h5
+`define SLLV 6'h4
+`define SRLV 6'h6
 `define NOP 32'h20
 
 `ifdef IVERILOG
@@ -55,7 +57,7 @@ module m_memory (w_clk, w_addr, w_we, w_din, r_dout);
    reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
    always @(posedge w_clk) if (w_we) cm_ram[w_addr] <= w_din;
    always @(posedge w_clk) r_dout <= cm_ram[w_addr];
-`include "program_loop.txt"
+`include "program_shift.txt"
 endmodule
 
 module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
@@ -173,6 +175,7 @@ module m_proc11 (w_clk, r_rout);
   reg IfId_we=0, IdEx_we=0, ExMe_we=0; //
   reg IfId_pr=0, IdEx_pr=0;
   reg IdEx_rsfwme=0, IdEx_rsfwwb=0, IdEx_rtfwme=0, IdEx_rtfwwb=0;
+  reg [5:0] IdEx_funct=0;
   wire [31:0] IfId_ir, MeWb_ldd; // note
   /**************************** IF stage **********************************/
   wire [10:0] w_bra;
@@ -184,8 +187,8 @@ module m_proc11 (w_clk, r_rout);
   m_memory m_imem (w_clk, r_pc, 1'd0, 32'd0, w_ir);
   assign w_npc = (w_rst | r_halt) ? 0 :
                  (w_pre) ? (w_pr ? w_bra : w_pc4) :
-                 (w_pr_fail && w_taken) ? IdEx_tpc :
-                 (w_pr_fail) ? IdEx_pc4 : w_pc4;
+                 (!w_pr_fail) ? w_pc4 :
+                 (w_taken) ? IdEx_tpc : IdEx_pc4;
   assign IfId_ir = w_ir;
   always @(posedge w_clk) if (!w_interlock) begin
     r_pc <= #3 w_npc;
@@ -200,6 +203,7 @@ module m_proc11 (w_clk, r_rout);
   wire [4:0] w_rt = IfId_ir[20:16];
   wire [4:0] w_rd = IfId_ir[15:11];
   wire [4:0] w_rd2 = (w_op!=0) ? w_rt : w_rd;
+  wire [5:0] w_funct = IfId_ir[5:0];
   wire [15:0] w_imm = IfId_ir[15:0];
   wire [31:0] w_imm32 = {{16{w_imm[15]}}, w_imm};
   wire [31:0] w_rrs_fw = (MeWb_w && MeWb_rd2 == w_rs) ? w_rslt2 : w_rrs;
@@ -226,8 +230,9 @@ module m_proc11 (w_clk, r_rout);
     IdEx_pr <= #3 IfId_pr;
     IdEx_rsfwme <= #3 !w_pr_fail && IdEx_w && IdEx_rd2 == w_rs;
     IdEx_rsfwwb <= #3 ExMe_w && ExMe_rd2 == w_rs;
-    IdEx_rtfwme <= #3 IdEx_op == 0 && !w_pr_fail && IdEx_w && IdEx_rd2 == w_rt;
-    IdEx_rtfwwb <= #3 IdEx_op == 0 && ExMe_w && ExMe_rd2 == w_rt; 
+    IdEx_rtfwme <= #3 w_op == 0 && !w_pr_fail && IdEx_w && IdEx_rd2 == w_rt;
+    IdEx_rtfwwb <= #3 w_op == 0 && ExMe_w && ExMe_rd2 == w_rt; 
+    IdEx_funct <= #3 w_funct;
   end
 
   /**************************** EX stage ***********************************/
@@ -235,7 +240,10 @@ module m_proc11 (w_clk, r_rout);
                       (IdEx_rsfwwb) ? MeWb_rslt : IdEx_rrs;
   wire [31:0] w_op2 = (IdEx_rtfwme) ? ExMe_rslt :
                       (IdEx_rtfwwb) ? MeWb_rslt : IdEx_rrt2;
-  wire [31:0] #10 w_rslt = w_op1 + w_op2; // ALU
+                      
+  wire [31:0] #10 w_rslt = (IdEx_op == 0 && IdEx_funct == `SLLV) ? w_op1 << w_op2[4:0] :
+                           (IdEx_op == 0 && IdEx_funct == `SRLV) ? w_op1 >> w_op2[4:0] :
+                           w_op1 + w_op2; // ALU
   
   assign w_interlock = (w_ex_be || IdEx_w || IdEx_we) && MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
   
