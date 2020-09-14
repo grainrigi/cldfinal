@@ -236,8 +236,8 @@ module m_proc11 (w_clk, r_rout);
   
   // branch
   // w_op[2] populates only if op == BNE || op == BEQ
-  wire w_ex_be = !r_pr_fail && IdEx_op[2];
-  assign w_taken = w_ex_be && (IdEx_op[0] ? w_op1!=w_op2 : w_op1==w_op2);
+  wire w_ex_be = !r_pr_fail && (IdEx_op == `BNE || IdEx_op == `BEQ);
+  assign w_taken = w_ex_be && (IdEx_op == `BNE ? w_op1!=w_op2 : w_op1==w_op2);
   wire w_pr_fail = w_ex_be && w_taken != IdEx_pr;
   reg r_pr_fail = 0;
   m_predictor m_brp (w_clk, IdEx_pc, w_taken, IdEx_tpc, w_ex_be, r_pc, w_pr, w_bra, w_pre);
