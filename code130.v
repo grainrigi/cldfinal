@@ -36,7 +36,7 @@ module m_main (w_clk, w_led);
    clk_wiz_0 clk_w0 (w_clk2, 0, w_locked, w_clk);
    
    wire [31:0] w_dout;
-   m_proc11 p (w_clk2, w_dout);
+   m_proc_sc p (w_clk2, w_dout);
 
    vio_0 vio_00(w_clk2, w_dout);
  
@@ -58,6 +58,23 @@ module m_memory (w_clk, w_addr, w_we, w_din, r_dout);
 `include "program_loop.txt"
 endmodule
 
+module m_memory2 (
+  w_clk,
+  w_aaddr, w_awe, w_adin, r_adout,
+  w_baddr, w_bwe, w_bdin, r_bdout
+);
+  input  wire w_clk, w_awe, w_bwe;
+  input  wire [10:0] w_aaddr, w_baddr;
+  input  wire [31:0] w_adin, w_bdin;
+  output reg [31:0] r_adout = 0, r_bdout;
+  reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
+  always @(posedge w_clk) if (w_awe) cm_ram[w_aaddr] <= w_adin;
+  always @(posedge w_clk) if (w_bwe) cm_ram[w_aaddr] <= w_bdin;
+  always @(posedge w_clk) r_adout <= cm_ram[w_aaddr];
+  always @(posedge w_clk) r_bdout <= cm_ram[w_baddr];
+`include "program_loop.txt"
+endmodule
+
 module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
    input  wire        w_clk;
    input  wire [4:0]  w_rr1, w_rr2, w_wr;
@@ -69,8 +86,27 @@ module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
    assign w_rdata1 = (w_rr1==0) ? 0 : r[w_rr1];
    assign w_rdata2 = (w_rr2==0) ? 0 : r[w_rr2];
    always @(posedge w_clk) if(w_we) r[w_wr] <= w_wdata;
-   
-   initial r[0] = 0;
+
+endmodule
+
+module m_regfile2 (
+  w_clk,
+  w_arr1, w_arr2, w_awr, w_awe, w_awdata, w_ardata1, w_ardata2,
+  w_brr1, w_brr2, w_bwr, w_bwe, w_bwdata, w_brdata1, w_brdata2
+);
+  input  wire        w_clk;
+  input  wire [4:0]  w_arr1, w_arr2, w_awr, w_brr1, w_brr2, w_bwr;
+  input  wire [31:0] w_awdata, w_bwdata;
+  input  wire        w_awe, w_bwe;
+  output wire [31:0] w_ardata1, w_ardata2, w_brdata1, w_brdata2;
+  
+  reg [31:0] r[0:31];
+  assign w_ardata1 = (w_arr1==0) ? 0 : r[w_arr1];
+  assign w_ardata2 = (w_arr2==0) ? 0 : r[w_arr2];
+  assign w_brdata1 = (w_brr1==0) ? 0 : r[w_brr1];
+  assign w_brdata2 = (w_brr2==0) ? 0 : r[w_brr2];
+  always @(posedge w_clk) if(w_awe) r[w_awr] <= w_awdata;
+  always @(posedge w_clk) if(w_bwe) r[w_bwr] <= w_bwdata;
 endmodule
 
 module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w_pre);
@@ -151,6 +187,236 @@ module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w
   end
 endmodule
 
+module m_proc_sc (w_clk, r_rout);
+  input wire w_clk;
+  output reg [31:0] r_rout;
+  
+  /**************************** IF stage **********************************/
+  reg [10:0] r_pc1=0, r_pc2=1;
+  wire [10:0] w_pc41 = r_pc1+2, w_pc42 = r_pc2+2;
+  wire [31:0] w_ir1, w_ir2;
+  
+  m_memory2 m_imem (
+    w_clk,
+    r_pc1, 1'd0, 32'd0, w_ir1,
+    r_pc2, 1'd0, 32'd0, w_ir2
+  );
+  
+  always @(posedge w_clk) begin
+    r_pc1 <= #3 r_pc1 + 2;
+    r_pc2 <= #3 r_pc2 + 2;
+  end
+  
+  /**************************** regs **********************************/
+  wire [4:0] w_rr11, w_rr21, w_wr1, w_rr12, w_rr22, w_wr2;
+  wire w_we1, w_we2;
+  wire [31:0] w_rdata11, w_rdata21, w_wdata1, w_rdata12, w_rdata22, w_wdata2;
+  m_regfile2 m_regs (
+    w_clk,
+    w_rr11, w_rr21, w_wr1, w_wdata1, w_we1, w_rdata11, w_rdata21,
+    w_rr12, w_rr22, w_wr2, w_wdata2, w_we2, w_rdata12, w_rdata22
+  );
+  
+  /**************************** dmem **********************************/
+  wire [10:0] w_mem_addr1, w_mem_addr2;
+  wire [31:0] w_mem_wdata1, w_mem_rdata1, w_mem_wdata2, w_mem_rdata2;
+  wire w_mem_we1, w_mem_we2;
+  m_memory2 m_dmem (
+    w_clk,
+    w_mem_addr1, w_mem_wdata1, w_mem_we1, w_mem_rdata1,
+    w_mem_addr2, w_mem_wdata2, w_mem_we2, w_mem_rdata2
+  );
+  
+  /**************************** pipelines **********************************/
+  wire [4:0] w_Ex_rd21, w_Ex_rd22;
+  wire w_interlock1, w_interlock2;
+  m_pipe m_p1 (
+    w_clk,
+    r_pc1, w_pc41, 1'd0, 1'd0, w_ir1,
+    w_rr11, w_rr21, w_wr1, w_wdata1, w_we1, w_rdata11, w_rdata21,
+    w_Ex_rd22, w_Ex_rd21, w_interlock1,
+    w_mem_addr1, w_mem_wdata1, w_mem_we1, w_mem_rdata1,
+    1'd0, 5'd0
+  );
+  m_pipe m_p2 (
+    w_clk,
+    r_pc2, w_pc42, 1'd0, 1'd0, w_ir2,
+    w_rr12, w_rr22, w_wr2, w_wdata2, w_we2, w_rdata12, w_rdata22,
+    w_Ex_rd21, w_Ex_rd22, w_interlock2,
+    w_mem_addr2, w_mem_wdata2, w_mem_we2, w_mem_rdata2,
+    1'd0, 5'd0
+  );
+  
+  /*************************************************************************/
+  initial r_rout = 0;
+  reg [31:0] r_tmp=0;
+  always @(posedge w_clk) begin
+    if (w_we1 && w_wr1 == 30)
+      r_tmp <= w_wdata1;
+    else if (w_we2 && w_wr2 == 30)
+      r_tmp <= w_wdata2;
+  end
+  always @(posedge w_clk) r_rout <= r_tmp;
+endmodule
+
+module m_pipe (
+  w_clk,
+  i_pc, i_pc4, i_pre, i_pr, i_ir,
+  o_rr1, o_rr2, o_wr, o_wdata, o_we, i_rdata1, i_rdata2,
+  i_Ex_rd2, o_Ex_rd2, o_interlock,
+  o_mem_addr, o_mem_wdata, o_mem_we, i_mem_rdata,
+  i_Wb_w, i_Wb_rd2
+);
+  input  wire w_clk;
+  
+  input  wire [10:0] i_pc, i_pc4;
+  input  wire i_pre, i_pr;
+  input  wire [31:0] i_ir;
+  
+  output wire [4:0] o_rr1, o_rr2, o_wr;
+  output wire [31:0] o_wdata;
+  output wire o_we;
+  input  wire [31:0] i_rdata1, i_rdata2;
+  
+  input  wire [4:0] i_Ex_rd2;
+  output wire [4:0] o_Ex_rd2;
+  output wire o_interlock;
+  
+  output wire [10:0] o_mem_addr;
+  output wire [31:0] o_mem_wdata;
+  output wire o_mem_we;
+  input  wire [31:0] i_mem_rdata;
+  
+  input wire i_Wb_w;
+  input wire [4:0] i_Wb_rd2; 
+  
+  reg r_halt = 0;
+  wire w_be;
+  wire w_rst = 0;
+  wire w_interlock;
+  reg [10:0] IfId_pc4=0, IdEx_pc4=0; // pipe regs
+  reg [31:0] IdEx_rrs=0, IdEx_rrt=0, IdEx_rrt2=0; //
+  reg [31:0] ExMe_rslt=0, ExMe_rrt=0; //
+  reg [31:0] MeWb_rslt=0; //
+  reg [5:0] IdEx_op=0, ExMe_op=0, MeWb_op=0; //
+  reg [10:0] IfId_pc=0, IdEx_pc=0, ExMe_pc=0, MeWb_pc=0; //
+  reg [10:0] IdEx_tpc=0;
+  reg [4:0] IdEx_rs=0;
+  reg [4:0] IdEx_rt=0, ExMe_rt=0;
+  reg [4:0] IfId_rd2=0, IdEx_rd2=0, ExMe_rd2=0, MeWb_rd2=0;//
+  reg IdEx_w=0, ExMe_w=0, MeWb_w=0; //
+  reg IdEx_we=0, ExMe_we=0; //
+  reg IfId_pr=0, IdEx_pr=0;
+  reg IdEx_rsfwme=0, IdEx_rsfwwb=0, IdEx_rtfwme=0, IdEx_rtfwwb=0;
+  wire [31:0] IfId_ir, MeWb_ldd; // note
+  /**************************** IF stage (external) **********************************/
+  wire [10:0] w_bra;
+  wire w_taken;
+  wire [10:0] w_tpc; 
+  assign IfId_ir = i_ir;
+  always @(posedge w_clk) if (!w_interlock) begin
+    IfId_pc <= #3 i_pc;
+    IfId_pc4 <= #3 i_pc4;
+    IfId_pr <= #3 i_pre && i_pr;
+  end
+  
+  /**************************** ID stage ***********************************/
+  wire [31:0] w_rrs, w_rrt, w_rslt2;
+  wire [5:0] w_op = IfId_ir[31:26];
+  wire [4:0] w_rs = IfId_ir[25:21];
+  wire [4:0] w_rt = IfId_ir[20:16];
+  wire [4:0] w_rd = IfId_ir[15:11];
+  wire [4:0] w_rd2 = (w_op!=0) ? w_rt : w_rd;
+  wire [15:0] w_imm = IfId_ir[15:0];
+  wire [31:0] w_imm32 = {{16{w_imm[15]}}, w_imm};
+  wire [31:0] w_rrs_fw = (MeWb_w && MeWb_rd2 == w_rs) ? w_rslt2 : w_rrs;
+  wire [31:0] w_rrt_fw = (MeWb_w && MeWb_rd2 == w_rt) ? w_rslt2 : w_rrt;
+  wire [31:0] w_rrt2 = (w_op>6'h5) ? w_imm32 : w_rrt_fw;
+  // assign w_be = w_op==`BNE || w_op==`BEQ;
+  assign w_be = w_op[2];
+  assign w_tpc = IfId_pc4 + w_imm[10:0];
+
+  always @(posedge w_clk) if (!w_interlock) begin
+    IdEx_pc <= #3 IfId_pc;
+    IdEx_pc4 <= #3 IfId_pc4;
+    IdEx_op <= #3 r_pr_fail ? {w_op[5:3], 1'b0, w_op[1:0]} : w_op;
+    IdEx_rs <= #3 w_rs;
+    IdEx_rt <= #3 w_rt;
+    IdEx_rd2 <= #3 w_rd2;
+    IdEx_w <= #3 r_pr_fail ? 0 : (w_op==0 || (w_op>6'h5 && w_op<6'h28));
+    IdEx_we <= #3 r_pr_fail ? 0 : (w_op>6'h27);
+    IdEx_rrs <= #3 w_rrs_fw;
+    IdEx_rrt <= #3 w_rrt_fw;
+    IdEx_rrt2 <= #3 w_rrt2;
+    IdEx_tpc <= #3 w_tpc;
+    IdEx_pr <= #3 IfId_pr;
+    IdEx_rsfwme <= #3 !w_pr_fail && IdEx_w && IdEx_rd2 == w_rs;
+    IdEx_rsfwwb <= #3 ExMe_w && ExMe_rd2 == w_rs;
+    IdEx_rtfwme <= #3 IdEx_op == 0 && !w_pr_fail && IdEx_w && IdEx_rd2 == w_rt;
+    IdEx_rtfwwb <= #3 IdEx_op == 0 && ExMe_w && ExMe_rd2 == w_rt; 
+  end
+  assign o_rr1 = w_rs;
+  assign o_rr2 = w_rt;
+  assign o_wr = MeWb_rd2;
+  assign o_we = MeWb_w;
+  assign o_wdata = w_rslt2;
+  assign w_rrs = i_rdata1;
+  assign w_rrt = i_rdata2;
+  
+  /**************************** EX stage ***********************************/
+  wire [31:0] w_op1 = (IdEx_rsfwme) ? ExMe_rslt : 
+                      (IdEx_rsfwwb) ? MeWb_rslt : IdEx_rrs;
+  wire [31:0] w_op2 = (IdEx_rtfwme) ? ExMe_rslt :
+                      (IdEx_rtfwwb) ? MeWb_rslt : IdEx_rrt2;
+  wire [31:0] #10 w_rslt = w_op1 + w_op2; // ALU
+  
+  wire w_fw_ldd = (w_ex_be || IdEx_w || IdEx_we) && MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
+  wire w_fw_ex = i_Ex_rd2 != 0 && (i_Ex_rd2 == IdEx_rs || i_Ex_rd2 == IdEx_rt);
+  assign w_interlock = w_fw_ldd || w_fw_ex;
+  
+  // branch
+  // w_op[2] populates only if op == BNE || op == BEQ
+  wire w_ex_be = !r_pr_fail && (IdEx_op == `BNE || IdEx_op == `BEQ);
+  assign w_taken = w_ex_be && (IdEx_op == `BNE ? w_op1!=w_op2 : w_op1==w_op2);
+  wire w_pr_fail = w_ex_be && w_taken != IdEx_pr;
+  reg r_pr_fail = 0;
+  
+  always @(posedge w_clk) if (!w_interlock) begin
+    r_pr_fail <= #3 w_pr_fail;
+    ExMe_pc <= #3 IdEx_pc;
+    ExMe_op <= #3 IdEx_op;
+    ExMe_rt <= #3 IdEx_rt;
+    ExMe_rd2 <= #3 IdEx_rd2;
+    ExMe_w <= #3 r_pr_fail ? 0 : IdEx_w;
+    ExMe_we <= #3 r_pr_fail ? 0 : IdEx_we;
+    ExMe_rslt <= #3 w_rslt;
+    ExMe_rrt <= #3 (MeWb_w && MeWb_rd2 == IdEx_rt) ? w_rslt2 : IdEx_rrt;
+  end
+  assign o_Ex_rd2 = IdEx_w ? IdEx_rd2 : 0;
+  assign o_interlock = w_interlock;
+  
+  /**************************** MEM stage **********************************/
+  // ホントはw_rslt2じゃなくてMeWb_rsltをフォワードしても良い(lw $xの直後にsw $xが来ないなら)
+  wire [31:0] w_std = (ExMe_rt == MeWb_rd2) ? w_rslt2 : ExMe_rrt;
+  m_memory m_dmem (w_clk, ExMe_rslt[12:2], ExMe_we, w_std, MeWb_ldd);
+  always @(posedge w_clk) begin
+    MeWb_pc <= #3 ExMe_pc;
+    MeWb_rslt <= #3 ExMe_rslt;
+    MeWb_op <= #3 ExMe_op;
+    MeWb_rd2 <= #3 ExMe_rd2;
+    MeWb_w <= #3 ExMe_w;
+  end
+  assign o_mem_addr = ExMe_rslt[12:2];
+  assign o_mem_wdata = w_std;
+  assign o_mem_we = ExMe_we;
+  assign MeWb_ldd = i_mem_rdata;
+  
+  /**************************** WB stage ***********************************/
+  wire w_load_mem = (MeWb_op>6'h19 && MeWb_op<6'h28);
+  assign w_rslt2 = w_load_mem ? MeWb_ldd : MeWb_rslt;
+endmodule
+
+`ifdef HOGE
 module m_proc11 (w_clk, r_rout);
   input wire w_clk;
   output reg [31:0] r_rout;
@@ -278,4 +544,5 @@ module m_proc11 (w_clk, r_rout);
   always @(posedge w_clk) r_tmp <= (w_rst) ? 0 : (MeWb_rd2==30) ? w_rslt2 : r_tmp;
   always @(posedge w_clk) r_rout <= r_tmp;
 endmodule
+`endif
 
