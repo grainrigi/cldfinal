@@ -9,6 +9,7 @@
 `define SLLV 6'h4
 `define SRLV 6'h6
 `define NOP 32'h20
+`define HALT {6'h4, 5'd0, 5'd0, 16'hffff}
 
 `ifdef IVERILOG
 /***** top module for simulation *****/
@@ -28,6 +29,41 @@ module m_top ();
    initial #14000 $finish;
 endmodule
 
+`elsif CONTEST_V
+/***** top module for verification *****/
+module m_top ();
+  reg r_clk=0; initial forever #50 r_clk = ~r_clk;
+  wire [31:0] w_led;
+  m_proc11 p (r_clk, w_led);
+  always@(posedge r_clk)
+  if(p.MeWb_w) $write("%08x\n", p.w_rslt2);
+  always@(posedge r_clk) if(p.IfId_ir==`HALT) #200 $finish();
+endmodule
+
+`elsif CONTEST
+module m_top ();
+  reg r_clk=0; initial forever #50 r_clk = ~r_clk;
+  wire [31:0] w_led;
+  reg [31:0] r_cnt = 0;
+  always@(posedge r_clk) r_cnt <= r_cnt + 1;
+  m_proc11 p (r_clk, w_led);
+  initial $write("clock : r_pc w_ir w_rrs w_rrt2 r_rslt2 r_led\n");
+  always@(posedge r_clk) begin
+    $write("%6d: %x %x %x %x %x %x ", r_cnt,
+      p.r_pc, p.IfId_ir, p.w_rrs, p.w_rrt2,
+      p.w_rslt2, w_led);
+    if(p.w_op == 0 && p.w_funct == 6'h20) $write("add");
+    if(p.w_op == 0 && p.w_funct == `SLLV) $write("sllv");
+    if(p.w_op == 0 && p.w_funct == `SRLV) $write("srlv");
+    if(p.w_op == 6'h8) $write("addi");
+    if(p.w_op == 6'h23) $write("lw");
+    if(p.w_op == 6'h2b) $write("sw");
+    if(p.w_op == `BEQ) $write("beq");
+    if(p.w_op == `BNE) $write("bne");
+    $write("\n");
+  end
+  always@(posedge r_clk) if(p.IfId_ir==`HALT) #210 $finish();
+endmodule
 `else
 /***** main module for FPGA implementation *****/
 module m_main (w_clk, w_led);
@@ -57,7 +93,7 @@ module m_memory (w_clk, w_addr, w_we, w_din, r_dout);
    reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
    always @(posedge w_clk) if (w_we) cm_ram[w_addr] <= w_din;
    always @(posedge w_clk) r_dout <= cm_ram[w_addr];
-`include "program_loop.txt"
+`include "program_contest.txt"
 endmodule
 
 module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
@@ -191,7 +227,7 @@ module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w
   always @(posedge w_clk) if (w_be == 1) begin
     if (w_bselect != 4) begin
       // update priority
-      $write("Update prediction: pc=%x, br=%b, pr=%b\n", w_baddr, w_br, w_npd);
+      // $write("Update prediction: pc=%x, br=%b, pr=%b\n", w_baddr, w_br, w_npd);
     end
   end
   
@@ -213,7 +249,7 @@ module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w
             r_addr[g2] <= #3 w_baddr;
             r_dst[g2] <= #3 w_bdst;
             r_predict[g2] <= #3 w_br ? 2'b10 : 2'b01;
-            $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", g2, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
+            // $write("Init prediction: slot=%d, pc=%x, br=%b, pr=%b\n", g2, w_baddr, w_br, w_br ? 2'b10 : 2'b01);
           end
           // 優先度は新たに書き込んだスロットが0、それ以外は1増加
           r_priority[g2] <= #3 (r_priority[g2] == 3) ? 0 : r_priority[g2] + 1;
