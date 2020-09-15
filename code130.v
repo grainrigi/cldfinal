@@ -330,7 +330,7 @@ module m_proc11 (w_clk, r_rout);
     IdEx_rs <= #3 w_rs;
     IdEx_rt <= #3 w_rt;
     IdEx_rd2 <= #3 w_rd2;
-    IdEx_w <= #3 r_pr_fail ? 0 : (w_op==0 || (w_op>6'h5 && w_op<6'h28));
+    IdEx_w <= #3 r_pr_fail ? 0 : ((w_op==0 && w_funct>6'h2) || (w_op>6'h5 && w_op<6'h28));
     IdEx_we <= #3 r_pr_fail ? 0 : (w_op>6'h27);
     IdEx_rrs <= #3 w_rrs_fw;
     IdEx_rrt <= #3 w_rrt_fw;
