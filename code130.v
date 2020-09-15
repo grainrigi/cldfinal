@@ -35,11 +35,11 @@ module m_main (w_clk, w_led);
    input  wire w_clk;
    output wire [3:0] w_led;
  
-   wire w_clk2, w_locked;
-   clk_wiz_0 clk_w0 (w_clk2, 0, w_locked, w_clk);
+   wire w_clk2, w_clk2_, w_locked;
+   clk_wiz_0 clk_w0 (w_clk2, w_clk2_, 0, w_locked, w_clk);
    
    wire [31:0] w_dout;
-   m_proc_sc p (w_clk2, w_dout);
+   m_proc_sc p (w_clk2, w_clk2_, w_dout);
 
    vio_0 vio_00(w_clk2, w_dout);
  
@@ -72,7 +72,7 @@ module m_memory2 (
   output reg [31:0] r_adout = 0, r_bdout;
   reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
   always @(posedge w_clk) if (w_awe) cm_ram[w_aaddr] <= w_adin;
-  always @(posedge w_clk) if (w_bwe) cm_ram[w_aaddr] <= w_bdin;
+  always @(posedge w_clk) if (w_bwe) cm_ram[w_baddr] <= w_bdin;
   always @(posedge w_clk) r_adout <= cm_ram[w_aaddr];
   always @(posedge w_clk) r_bdout <= cm_ram[w_baddr];
 `include "program_loop.txt"
@@ -108,15 +108,13 @@ module m_regfile2 (
   assign w_ardata2 = (w_arr2==0) ? 0 : ra[w_arr2];
   assign w_brdata1 = (w_brr1==0) ? 0 : rb[w_brr1];
   assign w_brdata2 = (w_brr2==0) ? 0 : rb[w_brr2];
-  always @(posedge w_clk2) begin
-    if(w_clk && w_awe) begin
-      ra[w_awr] <= w_awdata;
-      rb[w_awr] <= w_awdata;
-    end 
-    if(!w_clk && w_bwe) begin
-      ra[w_bwr] <= w_bwdata;
-      rb[w_bwr] <= w_bwdata;
-    end
+  
+  wire [4:0] w_wr = w_clk ? w_awr : w_bwr;
+  wire w_we = (w_clk && w_awe) || (!w_clk && w_bwe);
+  wire [31:0] w_wdata = w_clk ? w_awr : w_bwr;
+  always @(posedge w_clk2) if (w_we) begin
+    ra[w_wr] <= w_wdata;
+    rb[w_wr] <= w_wdata;
   end
 endmodule
 
