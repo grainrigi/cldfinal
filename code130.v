@@ -293,17 +293,21 @@ module m_proc11 (w_clk, r_rout);
   /**************************** IF stage **********************************/
   wire [10:0] w_bra; // 分岐予測器から供給されたtaken時の分岐先アドレス
   wire w_taken, w_pre, w_pr; // w_taken: EXステージで判定した分岐結果, w_pre, w_pr: 分岐予測器より
-  wire [10:0] w_npc;
-  reg [10:0] r_pc = 0; 
-  wire [10:0] w_pc4 = r_pc + 1;
-  m_memory m_imem (w_clk, r_pc, 1'd0, 32'd0, IfId_ir);
-  assign w_npc = (w_rst | r_halt) ? 0 :
-                 (w_pre) ? (w_pr ? w_bra : w_pc4) :
-                 (!w_pr_fail) ? w_pc4 :
+  wire [10:0] w_npc1, w_npc2;
+  reg [10:0] r_pc1 = 0, r_pc2 = 0;
+  reg r_pre, r_pr;
+  wire [10:0] w_pc = r_pre ? r_pc1 : r_pc2; 
+  wire [10:0] w_pc4 = w_pc + 1;
+  m_memory m_imem (w_clk, w_pc, 1'd0, 32'd0, IfId_ir);
+  assign w_npc1 = (w_rst | r_halt) ? 0 :
+                 (w_pr ? w_bra : w_pc4);
+  assign w_npc2 = (!w_pr_fail) ? w_pc4 :
                  (w_taken) ? IdEx_tpc : IdEx_pc4;
   always @(posedge w_clk) if (!w_interlock) begin
-    r_pc <= #3 w_npc;
-    IfId_pc <= #3 r_pc;
+    r_pc1 <= #3 w_npc1;
+    r_pc2 <= #3 w_npc2;
+    r_pre <= w_pre;
+    IfId_pc <= #3 w_pc;
     IfId_pc4 <= #3 w_pc4;
     IfId_pr <= #3 w_pre && w_pr; // 分岐をどっちに予測したか(分岐予測が提供されればその結果、提供されなければ必ずnot takenと予測)
   end
@@ -367,7 +371,7 @@ module m_proc11 (w_clk, r_rout);
   wire w_pr_fail = w_ex_be && w_taken != IdEx_pr; // 分岐に失敗したかどうか
   // r_pr_fail = 1 の場合、その時点でID, EXステージにある命令はNOP化しなければならない
   reg r_pr_fail = 0;
-  m_predictor m_brp (w_clk, IdEx_pc, w_taken, IdEx_tpc, w_ex_be, r_pc, w_pr, w_bra, w_pre);
+  m_predictor m_brp (w_clk, IdEx_pc, w_taken, IdEx_tpc, w_ex_be, w_pc, w_pr, w_bra, w_pre);
   
   always @(posedge w_clk) if (!w_interlock) begin
     r_pr_fail <= #3 w_pr_fail;
