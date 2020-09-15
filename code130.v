@@ -14,12 +14,13 @@
 /***** top module for simulation *****/
 module m_top (); 
    reg r_clk=0; initial forever #50 r_clk = ~r_clk;
+   reg r_clk2=1; initial forever #25 r_clk2 = ~r_clk2;
    wire [31:0] w_led;
 
    initial $dumpfile("main.vcd");
    initial $dumpvars(0, m_top);
 
-   m_proc11 p (r_clk, w_led);
+   m_proc_sc p (r_clk, r_clk2, w_led);
    /*
    initial $write("time: s r_pc     w_ir     w_rrs    w_rrt2   r_rslt2  r_led\n");
    always@(posedge r_clk) $write("%4d: %d %x %x %x %x %x %x\n", $time,
@@ -57,7 +58,7 @@ module m_memory (w_clk, w_addr, w_we, w_din, r_dout);
    reg [31:0] 	      cm_ram [0:2047]; // 4K word (2048 x 32bit) memory
    always @(posedge w_clk) if (w_we) cm_ram[w_addr] <= w_din;
    always @(posedge w_clk) r_dout <= cm_ram[w_addr];
-`include "program_loop.txt"
+`include "program_shift.txt"
 endmodule
 
 module m_memory2 (
@@ -92,23 +93,31 @@ module m_regfile (w_clk, w_rr1, w_rr2, w_wr, w_we, w_wdata, w_rdata1, w_rdata2);
 endmodule
 
 module m_regfile2 (
-  w_clk,
+  w_clk, w_clk2,
   w_arr1, w_arr2, w_awr, w_awe, w_awdata, w_ardata1, w_ardata2,
   w_brr1, w_brr2, w_bwr, w_bwe, w_bwdata, w_brdata1, w_brdata2
 );
-  input  wire        w_clk;
+  input  wire        w_clk, w_clk2;
   input  wire [4:0]  w_arr1, w_arr2, w_awr, w_brr1, w_brr2, w_bwr;
   input  wire [31:0] w_awdata, w_bwdata;
   input  wire        w_awe, w_bwe;
   output wire [31:0] w_ardata1, w_ardata2, w_brdata1, w_brdata2;
   
-  reg [31:0] r[0:31];
-  assign w_ardata1 = (w_arr1==0) ? 0 : r[w_arr1];
-  assign w_ardata2 = (w_arr2==0) ? 0 : r[w_arr2];
-  assign w_brdata1 = (w_brr1==0) ? 0 : r[w_brr1];
-  assign w_brdata2 = (w_brr2==0) ? 0 : r[w_brr2];
-  always @(posedge w_clk) if(w_awe) r[w_awr] <= w_awdata;
-  always @(posedge w_clk) if(w_bwe) r[w_bwr] <= w_bwdata;
+  reg [31:0] ra[0:31], rb[0:31];
+  assign w_ardata1 = (w_arr1==0) ? 0 : ra[w_arr1];
+  assign w_ardata2 = (w_arr2==0) ? 0 : ra[w_arr2];
+  assign w_brdata1 = (w_brr1==0) ? 0 : rb[w_brr1];
+  assign w_brdata2 = (w_brr2==0) ? 0 : rb[w_brr2];
+  always @(posedge w_clk2) begin
+    if(w_clk && w_awe) begin
+      ra[w_awr] <= w_awdata;
+      rb[w_awr] <= w_awdata;
+    end 
+    if(!w_clk && w_bwe) begin
+      ra[w_bwr] <= w_bwdata;
+      rb[w_bwr] <= w_bwdata;
+    end
+  end
 endmodule
 
 /**** 分岐予測器
@@ -267,8 +276,8 @@ module m_predictor (w_clk, w_baddr, w_br, w_bdst, w_be, w_paddr, w_pr, w_pdst, w
   end
 endmodule
 
-module m_proc_sc (w_clk, r_rout);
-  input wire w_clk;
+module m_proc_sc (w_clk, w_clk2, r_rout);
+  input wire w_clk, w_clk2;
   output reg [31:0] r_rout;
   
   /**************************** IF stage **********************************/
@@ -292,9 +301,9 @@ module m_proc_sc (w_clk, r_rout);
   wire w_we1, w_we2;
   wire [31:0] w_rdata11, w_rdata21, w_wdata1, w_rdata12, w_rdata22, w_wdata2;
   m_regfile2 m_regs (
-    w_clk,
-    w_rr11, w_rr21, w_wr1, w_wdata1, w_we1, w_rdata11, w_rdata21,
-    w_rr12, w_rr22, w_wr2, w_wdata2, w_we2, w_rdata12, w_rdata22
+    w_clk, w_clk2,
+    w_rr11, w_rr21, w_wr1, w_we1, w_wdata1, w_rdata11, w_rdata21,
+    w_rr12, w_rr22, w_wr2, w_we2, w_wdata2, w_rdata12, w_rdata22
   );
   
   /**************************** dmem **********************************/
@@ -303,8 +312,8 @@ module m_proc_sc (w_clk, r_rout);
   wire w_mem_we1, w_mem_we2;
   m_memory2 m_dmem (
     w_clk,
-    w_mem_addr1, w_mem_wdata1, w_mem_we1, w_mem_rdata1,
-    w_mem_addr2, w_mem_wdata2, w_mem_we2, w_mem_rdata2
+    w_mem_addr1, w_mem_we1, w_mem_wdata1, w_mem_rdata1,
+    w_mem_addr2, w_mem_we2, w_mem_wdata2, w_mem_rdata2
   );
   
   /**************************** pipelines **********************************/
@@ -371,9 +380,8 @@ module m_pipe (
   input wire [4:0] i_Wb_rd2; 
   
   reg r_halt = 0;
-  wire w_be;
   wire w_rst = 0;
-  wire w_interlock;
+  wire w_interlock; // パイプラインをインターロック(停止)するかどうか (IF,ID,EXが停止、MEM,WBは稼働する)
   reg [10:0] IfId_pc4=0, IdEx_pc4=0; // pipe regs
   reg [31:0] IdEx_rrs=0, IdEx_rrt=0, IdEx_rrt2=0; //
   reg [31:0] ExMe_rslt=0, ExMe_rrt=0; //
@@ -387,12 +395,12 @@ module m_pipe (
   reg IdEx_w=0, ExMe_w=0, MeWb_w=0; //
   reg IdEx_we=0, ExMe_we=0; //
   reg IfId_pr=0, IdEx_pr=0;
-  reg IdEx_rsfwme=0, IdEx_rsfwwb=0, IdEx_rtfwme=0, IdEx_rtfwwb=0;
+  reg IdEx_rsfwme=0, IdEx_rsfwwb=0, IdEx_rtfwme=0, IdEx_rtfwwb=0; // EXステージでデータフォワードが必要かどうかのフラグ
+  reg [5:0] IdEx_funct=0;
   wire [31:0] IfId_ir, MeWb_ldd; // note
   /**************************** IF stage (external) **********************************/
-  wire [10:0] w_bra;
-  wire w_taken;
-  wire [10:0] w_tpc; 
+  wire [10:0] w_bra; // 分岐予測器から供給されたtaken時の分岐先アドレス
+  wire w_taken; // EXステージで判定した分岐結果
   assign IfId_ir = i_ir;
   always @(posedge w_clk) if (!w_interlock) begin
     IfId_pc <= #3 i_pc;
@@ -407,14 +415,13 @@ module m_pipe (
   wire [4:0] w_rt = IfId_ir[20:16];
   wire [4:0] w_rd = IfId_ir[15:11];
   wire [4:0] w_rd2 = (w_op!=0) ? w_rt : w_rd;
+  wire [5:0] w_funct = IfId_ir[5:0];
   wire [15:0] w_imm = IfId_ir[15:0];
   wire [31:0] w_imm32 = {{16{w_imm[15]}}, w_imm};
   wire [31:0] w_rrs_fw = (MeWb_w && MeWb_rd2 == w_rs) ? w_rslt2 : w_rrs;
   wire [31:0] w_rrt_fw = (MeWb_w && MeWb_rd2 == w_rt) ? w_rslt2 : w_rrt;
   wire [31:0] w_rrt2 = (w_op>6'h5) ? w_imm32 : w_rrt_fw;
-  // assign w_be = w_op==`BNE || w_op==`BEQ;
-  assign w_be = w_op[2];
-  assign w_tpc = IfId_pc4 + w_imm[10:0];
+  wire [10:0] w_tpc = IfId_pc4 + w_imm[10:0];
 
   always @(posedge w_clk) if (!w_interlock) begin
     IdEx_pc <= #3 IfId_pc;
@@ -430,10 +437,13 @@ module m_pipe (
     IdEx_rrt2 <= #3 w_rrt2;
     IdEx_tpc <= #3 w_tpc;
     IdEx_pr <= #3 IfId_pr;
-    IdEx_rsfwme <= #3 !w_pr_fail && IdEx_w && IdEx_rd2 == w_rs;
+    // MEM, WBからのフォワーディングの必要性を判定
+    IdEx_rsfwme <= #3 IdEx_w && IdEx_rd2 == w_rs;
     IdEx_rsfwwb <= #3 ExMe_w && ExMe_rd2 == w_rs;
+    // rtはRフォーマット(w_op == 0)の場合のみ必要
     IdEx_rtfwme <= #3 IdEx_op == 0 && !w_pr_fail && IdEx_w && IdEx_rd2 == w_rt;
     IdEx_rtfwwb <= #3 IdEx_op == 0 && ExMe_w && ExMe_rd2 == w_rt; 
+    IdEx_funct <= #3 w_funct;
   end
   assign o_rr1 = w_rs;
   assign o_rr2 = w_rt;
@@ -444,21 +454,26 @@ module m_pipe (
   assign w_rrt = i_rdata2;
   
   /**************************** EX stage ***********************************/
+  // 必要に応じてフォワーディングする(WBからはw_rslt2でなくMeWb_rsltをフォワード(lwの結果はフォワードしない))
   wire [31:0] w_op1 = (IdEx_rsfwme) ? ExMe_rslt : 
                       (IdEx_rsfwwb) ? MeWb_rslt : IdEx_rrs;
   wire [31:0] w_op2 = (IdEx_rtfwme) ? ExMe_rslt :
                       (IdEx_rtfwwb) ? MeWb_rslt : IdEx_rrt2;
-  wire [31:0] #10 w_rslt = w_op1 + w_op2; // ALU
+
+  // ALU
+  wire [31:0] #10 w_rslt = (IdEx_op == 0 && IdEx_funct == `SLLV) ? w_op1 << w_op2[4:0] :
+                           (IdEx_op == 0 && IdEx_funct == `SRLV) ? w_op1 >> w_op2[4:0] :
+                           w_op1 + w_op2;
   
   wire w_fw_ldd = (w_ex_be || IdEx_w || IdEx_we) && MeWb_w && (MeWb_rd2 == IdEx_rs || (IdEx_op == 0 && MeWb_rd2 == IdEx_rt)) && w_load_mem;
   wire w_fw_ex = i_Ex_rd2 != 0 && (i_Ex_rd2 == IdEx_rs || i_Ex_rd2 == IdEx_rt);
   assign w_interlock = w_fw_ldd || w_fw_ex;
   
-  // branch
-  // w_op[2] populates only if op == BNE || op == BEQ
+  // 分岐判定
   wire w_ex_be = !r_pr_fail && (IdEx_op == `BNE || IdEx_op == `BEQ);
   assign w_taken = w_ex_be && (IdEx_op == `BNE ? w_op1!=w_op2 : w_op1==w_op2);
   wire w_pr_fail = w_ex_be && w_taken != IdEx_pr;
+  // r_pr_fail = 1 の場合、その時点で前2つの命令はNOP化しなければならない
   reg r_pr_fail = 0;
   
   always @(posedge w_clk) if (!w_interlock) begin
