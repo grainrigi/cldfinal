@@ -37,7 +37,7 @@ module m_top ();
   m_proc11 p (r_clk, w_led);
   always@(posedge r_clk)
   if(p.MeWb_w) $write("%08x\n", p.w_rslt2);
-  always@(posedge r_clk) if(p.IfId_ir==`HALT) #200 $finish();
+  always@(posedge r_clk) if(p.IfId_ir==`HALT) #300 $finish();
 endmodule
 
 `elsif CONTEST
@@ -62,7 +62,7 @@ module m_top ();
     if(p.w_op == `BNE) $write("bne");
     $write("\n");
   end
-  always@(posedge r_clk) if(p.IfId_ir==`HALT) #210 $finish();
+  always@(posedge r_clk) if(p.IfId_ir==`HALT) #310 $finish();
 endmodule
 `else
 /***** main module for FPGA implementation *****/
